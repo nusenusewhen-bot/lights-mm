@@ -8,7 +8,7 @@ load_dotenv()
 
 # ---------- CONFIG ----------
 TICKET_CATEGORY = "Tickets"
-SUPPORT_ROLE_ID = 1467374470221136067  # Only this role can view tickets & use ban/unban
+SUPPORT_ROLE_ID = 1467374470221136067  # Only this role can see tickets & use certain features
 PANEL_ALLOWED_ROLES = ["Founder", "Secondary Owner", "Management"]
 VOUCHES_FILE = "vouches.json"
 GUILD_ID = 1467374095841628207  # Your server ID
@@ -74,36 +74,70 @@ class TradeTicketModal(Modal, title="Trade Ticket"):
         embed.add_field(name="Receiving", value=self.receiving.value, inline=False)
         embed.add_field(name="Fee", value=self.fee.value, inline=False)
 
-        await channel.send(content=f"{interaction.user.mention} <@&{SUPPORT_ROLE_ID}>", embed=embed, view=CloseTicketView())
-        await interaction.response.send_message(f"✅ Ticket created: {channel.mention}", ephemeral=True)
+        await channel.send(
+            content=f"{interaction.user.mention} <@&{SUPPORT_ROLE_ID}>",
+            embed=embed,
+            view=TicketControlView()
+        )
 
-# ---------- CLOSE BUTTON ----------
-class CloseTicketView(View):
+        await interaction.response.send_message(
+            f"✅ Ticket created: {channel.mention}",
+            ephemeral=True
+        )
+
+# ---------- TICKET CONTROLS ----------
+class TicketControlView(View):
     def __init__(self):
         super().__init__(timeout=None)
+        self.claimed_by = None
+
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.green, custom_id="claim_ticket")
+    async def claim(self, interaction: discord.Interaction, button: Button):
+        if not has_role(interaction.user, SUPPORT_ROLE_ID):
+            return await interaction.response.send_message("❌ You cannot claim tickets.", ephemeral=True)
+
+        if self.claimed_by:
+            return await interaction.response.send_message(f"⚠️ Already claimed by {self.claimed_by.mention}", ephemeral=True)
+
+        self.claimed_by = interaction.user
+        button.disabled = True
+        self.unclaim_button.disabled = False
+        await interaction.message.edit(view=self)
+        await interaction.response.send_message(f"🎯 {interaction.user.mention} has claimed this ticket.", ephemeral=False)
+
+    @discord.ui.button(label="Unclaim", style=discord.ButtonStyle.gray, disabled=True, custom_id="unclaim_ticket")
+    async def unclaim_button(self, interaction: discord.Interaction, button: Button):
+        if not has_role(interaction.user, SUPPORT_ROLE_ID):
+            return await interaction.response.send_message("❌ You cannot unclaim tickets.", ephemeral=True)
+
+        if not self.claimed_by:
+            return await interaction.response.send_message("❌ This ticket isn’t claimed yet.", ephemeral=True)
+
+        if interaction.user != self.claimed_by:
+            return await interaction.response.send_message("❌ Only the claimer can unclaim.", ephemeral=True)
+
+        self.claimed_by = None
+        button.disabled = True
+        self.claim.disabled = False
+        await interaction.message.edit(view=self)
+        await interaction.response.send_message("🟢 Ticket has been unclaimed.", ephemeral=False)
 
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close(self, interaction: discord.Interaction, button: Button):
         if not has_role(interaction.user, SUPPORT_ROLE_ID):
             return await interaction.response.send_message("❌ No permission.", ephemeral=True)
-        await interaction.response.send_message("Closing...", ephemeral=True)
+        await interaction.response.send_message("Closing ticket...", ephemeral=True)
         await interaction.channel.delete()
 
-# ---------- PANEL VIEWS ----------
+# ---------- PANELS ----------
 class TradePanelView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
     @discord.ui.button(label="Open Trade Ticket", style=discord.ButtonStyle.green, custom_id="open_trade_ticket")
     async def open_ticket(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(TradeTicketModal())
 
 class SupportPanelView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
     @discord.ui.button(label="Open Support Ticket", style=discord.ButtonStyle.blurple, custom_id="open_support_ticket")
-    async def open_ticket(self, interaction: discord.Interaction, button: Button):
+    async def open_support(self, interaction: discord.Interaction, button: Button):
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name=TICKET_CATEGORY)
         if not category:
@@ -111,9 +145,8 @@ class SupportPanelView(View):
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
         }
-
         support_role = guild.get_role(SUPPORT_ROLE_ID)
         if support_role:
             overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
@@ -125,17 +158,17 @@ class SupportPanelView(View):
         )
 
         embed = discord.Embed(title="🎟️ Support Ticket",
-                              description="A staff member will assist you soon.",
+                              description="Support will be with you shortly.",
                               color=discord.Color.blurple())
-        await channel.send(content=f"{interaction.user.mention} <@&{SUPPORT_ROLE_ID}>", embed=embed, view=CloseTicketView())
-        await interaction.response.send_message(f"✅ Support ticket created: {channel.mention}", ephemeral=True)
+        await channel.send(content=f"{interaction.user.mention} <@&{SUPPORT_ROLE_ID}>", embed=embed, view=TicketControlView())
+        await interaction.response.send_message(f"✅ Ticket created: {channel.mention}", ephemeral=True)
 
 # ---------- PANEL COMMANDS ----------
 @bot.command()
 async def ticketpanel(ctx):
     if not any(r.name in PANEL_ALLOWED_ROLES for r in ctx.author.roles):
         return await ctx.send("❌ You don't have permission.")
-    embed = discord.Embed(title="🎯 Trade Ticket Panel", description="Click below to open a trade ticket.", color=discord.Color.green())
+    embed = discord.Embed(title="🎯 Trade Panel", description="Click below to open a trade ticket.", color=discord.Color.green())
     await ctx.send(embed=embed, view=TradePanelView())
 
 @bot.command()
@@ -148,10 +181,9 @@ async def supportpanel(ctx):
 # ---------- ADD USER ----------
 @bot.command()
 async def add(ctx, user: discord.User):
-    channel = ctx.channel
-    if not channel.category or channel.category.name != TICKET_CATEGORY:
-        return await ctx.send("❌ This command can only be used inside a ticket.")
-    await channel.set_permissions(user, view_channel=True, send_messages=True)
+    if not ctx.channel.category or ctx.channel.category.name != TICKET_CATEGORY:
+        return await ctx.send("❌ Use this command inside a ticket.")
+    await ctx.channel.set_permissions(user, view_channel=True, send_messages=True)
     await ctx.send(f"✅ Added {user.mention} to this ticket.")
 
 # ---------- VOUCH SYSTEM ----------
@@ -186,14 +218,14 @@ async def unban(ctx, user_id: int):
     except Exception as e:
         await ctx.send(f"⚠️ Error unbanning: {e}")
 
-# ---------- BOT READY ----------
+# ---------- READY ----------
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     bot.add_view(TradePanelView())
     bot.add_view(SupportPanelView())
-    bot.add_view(CloseTicketView())
-    print("✅ All systems ready with $ban and $unban active!")
+    bot.add_view(TicketControlView())
+    print("✅ Ticket system ready with Claim/Unclaim/Close buttons!")
 
 # ---------- RUN ----------
 bot.run(os.getenv("TOKEN"))
