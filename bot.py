@@ -9,9 +9,10 @@ load_dotenv()
 
 # ---------- CONFIG ----------
 TICKET_CATEGORY = "Tickets"
-SUPPORT_ROLE_ID = 1467374470221136067  # Only this role sees tickets & can ban/unban
+SUPPORT_ROLE_ID = 1467374470221136067  # Only this role can view all tickets & use ban/unban
 PANEL_ALLOWED_ROLES = ["Founder", "Secondary Owner", "Management"]
 VOUCHES_FILE = "vouches.json"
+GUILD_ID = 1467374095841628207  # ✅ Your server ID
 
 # ---------- DATA ----------
 if not os.path.exists(VOUCHES_FILE):
@@ -86,35 +87,24 @@ class TradeTicketModal(Modal, title="Trade Ticket"):
             ephemeral=True
         )
 
-# ---------- CLOSE BUTTON ----------
+# ---------- CLOSE TICKET ----------
 class CloseTicketView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="Close Ticket",
-        style=discord.ButtonStyle.red,
-        custom_id="close_ticket"
-    )
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red, custom_id="close_ticket")
     async def close(self, interaction: discord.Interaction, button: Button):
         if not has_role(interaction.user, SUPPORT_ROLE_ID):
-            return await interaction.response.send_message(
-                "❌ No permission.",
-                ephemeral=True
-            )
+            return await interaction.response.send_message("❌ No permission.", ephemeral=True)
         await interaction.response.send_message("Closing...", ephemeral=True)
         await interaction.channel.delete()
 
-# ---------- PANEL VIEWS ----------
+# ---------- TICKET PANELS ----------
 class TradePanelView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="Open Trade Ticket",
-        style=discord.ButtonStyle.green,
-        custom_id="open_trade_ticket"
-    )
+    @discord.ui.button(label="Open Trade Ticket", style=discord.ButtonStyle.green, custom_id="open_trade_ticket")
     async def open_ticket(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(TradeTicketModal())
 
@@ -122,11 +112,7 @@ class SupportPanelView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="Open Support Ticket",
-        style=discord.ButtonStyle.blurple,
-        custom_id="open_support_ticket"
-    )
+    @discord.ui.button(label="Open Support Ticket", style=discord.ButtonStyle.blurple, custom_id="open_support_ticket")
     async def open_ticket(self, interaction: discord.Interaction, button: Button):
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name=TICKET_CATEGORY)
@@ -153,51 +139,33 @@ class SupportPanelView(View):
             description="A staff member will be with you shortly.",
             color=discord.Color.blurple()
         )
-
-        await channel.send(
-            content=f"{interaction.user.mention} <@&{SUPPORT_ROLE_ID}>",
-            embed=embed,
-            view=CloseTicketView()
-        )
-
-        await interaction.response.send_message(
-            f"✅ Support ticket created: {channel.mention}",
-            ephemeral=True
-        )
+        await channel.send(content=f"{interaction.user.mention} <@&{SUPPORT_ROLE_ID}>", embed=embed, view=CloseTicketView())
+        await interaction.response.send_message(f"✅ Support ticket created: {channel.mention}", ephemeral=True)
 
 # ---------- PANEL COMMANDS ----------
 @bot.command()
 async def ticketpanel(ctx):
     if not any(r.name in PANEL_ALLOWED_ROLES for r in ctx.author.roles):
         return await ctx.send("❌ You don't have permission.")
-    embed = discord.Embed(
-        title="🎯 Trade Ticket Panel",
-        description="Click below to open a trade ticket.",
-        color=discord.Color.green()
-    )
+    embed = discord.Embed(title="🎯 Trade Panel", description="Click below to open a trade ticket.", color=discord.Color.green())
     await ctx.send(embed=embed, view=TradePanelView())
 
 @bot.command()
 async def supportpanel(ctx):
     if not any(r.name in PANEL_ALLOWED_ROLES for r in ctx.author.roles):
         return await ctx.send("❌ You don't have permission.")
-    embed = discord.Embed(
-        title="🆘 Support Panel",
-        description="Click below to open a support ticket.",
-        color=discord.Color.blurple()
-    )
+    embed = discord.Embed(title="🆘 Support Panel", description="Click below to open a support ticket.", color=discord.Color.blurple())
     await ctx.send(embed=embed, view=SupportPanelView())
 
 # ---------- ADD USER ----------
 @bot.command()
 async def add(ctx, user: discord.User):
-    channel = ctx.channel
-    if not channel.category or channel.category.name != TICKET_CATEGORY:
-        return await ctx.send("❌ This command can only be used inside a ticket.")
-    await channel.set_permissions(user, view_channel=True, send_messages=True)
-    await ctx.send(f"✅ Added {user.mention} to the ticket.")
+    if not ctx.channel.category or ctx.channel.category.name != TICKET_CATEGORY:
+        return await ctx.send("❌ Use this inside a ticket.")
+    await ctx.channel.set_permissions(user, view_channel=True, send_messages=True)
+    await ctx.send(f"✅ Added {user.mention} to this ticket.")
 
-# ---------- VOUCHES ----------
+# ---------- VOUCH SYSTEM ----------
 @bot.command()
 async def vouch(ctx, user: discord.User):
     add_vouch(user.id)
@@ -210,7 +178,7 @@ async def vouches(ctx, user: discord.User):
 # ---------- SLASH COMMANDS ----------
 @bot.tree.command(name="ban", description="Ban a user (Support role only)")
 @app_commands.describe(member="User to ban", reason="Reason for ban")
-async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+async def slash_ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if not has_role(interaction.user, SUPPORT_ROLE_ID):
         return await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
     try:
@@ -221,7 +189,7 @@ async def ban(interaction: discord.Interaction, member: discord.Member, reason: 
 
 @bot.tree.command(name="unban", description="Unban a user by ID (Support role only)")
 @app_commands.describe(user_id="User ID to unban")
-async def unban(interaction: discord.Interaction, user_id: str):
+async def slash_unban(interaction: discord.Interaction, user_id: str):
     if not has_role(interaction.user, SUPPORT_ROLE_ID):
         return await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
     try:
@@ -231,7 +199,7 @@ async def unban(interaction: discord.Interaction, user_id: str):
     except Exception as e:
         await interaction.response.send_message(f"⚠️ Error unbanning: {e}", ephemeral=True)
 
-# ---------- READY EVENT ----------
+# ---------- BOT READY ----------
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
@@ -240,10 +208,11 @@ async def on_ready():
     bot.add_view(CloseTicketView())
 
     try:
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands.")
+        guild = discord.Object(id=GUILD_ID)
+        synced = await bot.tree.sync(guild=guild)
+        print(f"✅ Synced {len(synced)} slash commands to guild {GUILD_ID}")
     except Exception as e:
-        print(f"⚠️ Sync Error: {e}")
+        print(f"⚠️ Sync error: {e}")
 
 # ---------- RUN ----------
 bot.run(os.getenv("TOKEN"))
