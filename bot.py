@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 from discord.ui import View, Button, Modal, TextInput
 import os, json
 from dotenv import load_dotenv
@@ -10,11 +9,9 @@ load_dotenv()
 # ---------- CONFIG ----------
 TICKET_CATEGORY = "Tickets"
 
-MIDDLEMAN_ROLE_ID = 1467374476537893063
-SUPPORT_ROLE_ID = 1467374470221136067
+SUPPORT_ROLE_ID = 1467374470221136067  # Only this role sees tickets & can ban/unban
 
 PANEL_ALLOWED_ROLES = ["Founder", "Secondary Owner", "Management"]
-BAN_ALLOWED_ROLES = ["Moderator", "Management", "Secondary Owner", "Founder"]
 
 VOUCHES_FILE = "vouches.json"
 
@@ -64,12 +61,12 @@ class TradeTicketModal(Modal, title="Trade Ticket"):
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         }
 
-        mm_role = guild.get_role(MIDDLEMAN_ROLE_ID)
-        if mm_role:
-            overwrites[mm_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        support_role = guild.get_role(SUPPORT_ROLE_ID)
+        if support_role:
+            overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
         channel = await guild.create_text_channel(
             name=f"trade-{interaction.user.id}",
@@ -84,7 +81,7 @@ class TradeTicketModal(Modal, title="Trade Ticket"):
         embed.add_field(name="Fee", value=self.fee.value, inline=False)
 
         await channel.send(
-            content=f"{interaction.user.mention} <@&{MIDDLEMAN_ROLE_ID}>",
+            content=f"{interaction.user.mention} <@&{SUPPORT_ROLE_ID}>",
             embed=embed,
             view=CloseTicketView()
         )
@@ -105,10 +102,7 @@ class CloseTicketView(View):
         custom_id="close_ticket"
     )
     async def close(self, interaction: discord.Interaction, button: Button):
-        if not (
-            has_role(interaction.user, MIDDLEMAN_ROLE_ID)
-            or has_role(interaction.user, SUPPORT_ROLE_ID)
-        ):
+        if not has_role(interaction.user, SUPPORT_ROLE_ID):
             return await interaction.response.send_message(
                 "❌ No permission.",
                 ephemeral=True
@@ -117,7 +111,7 @@ class CloseTicketView(View):
         await interaction.response.send_message("Closing...", ephemeral=True)
         await interaction.channel.delete()
 
-# ---------- PANEL ----------
+# ---------- TICKET PANELS ----------
 class TradePanelView(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -147,7 +141,7 @@ class SupportPanelView(View):
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         }
 
         support_role = guild.get_role(SUPPORT_ROLE_ID)
@@ -175,11 +169,12 @@ class SupportPanelView(View):
             ephemeral=True
         )
 
-# ---------- TICKET PANEL COMMANDS ----------
+# ---------- PANEL COMMANDS ----------
 @bot.command()
 async def ticketpanel(ctx):
     if not any(r.name in PANEL_ALLOWED_ROLES for r in ctx.author.roles):
         return await ctx.send("❌ You don't have permission.")
+
     embed = discord.Embed(
         title="🎯 Trade Ticket Panel",
         description="Click below to open a trade ticket.",
@@ -191,6 +186,7 @@ async def ticketpanel(ctx):
 async def supportpanel(ctx):
     if not any(r.name in PANEL_ALLOWED_ROLES for r in ctx.author.roles):
         return await ctx.send("❌ You don't have permission.")
+
     embed = discord.Embed(
         title="🆘 Support Panel",
         description="Click below to open a support ticket.",
@@ -198,15 +194,15 @@ async def supportpanel(ctx):
     )
     await ctx.send(embed=embed, view=SupportPanelView())
 
-# ---------- ADD USER COMMAND ----------
+# ---------- ADD USER ----------
 @bot.command()
 async def add(ctx, user: discord.User):
     channel = ctx.channel
     if not channel.category or channel.category.name != TICKET_CATEGORY:
-        return await ctx.send("❌ This command can only be used inside a ticket.")
+        return await ctx.send("❌ This command can only be used inside a ticket channel.")
 
     await channel.set_permissions(user, view_channel=True, send_messages=True)
-    await ctx.send(f"✅ Added {user.mention} to the ticket.")
+    await ctx.send(f"✅ Added {user.mention} to this ticket.")
 
 # ---------- VOUCH SYSTEM ----------
 @bot.command()
@@ -219,6 +215,30 @@ async def vouches(ctx, user: discord.User):
     count = get_vouches(user.id)
     await ctx.send(f"💬 {user.mention} has **{count}** vouches.")
 
+# ---------- BAN / UNBAN ----------
+@bot.command()
+async def ban(ctx, member: discord.Member, *, reason: str = "No reason provided"):
+    if not has_role(ctx.author, SUPPORT_ROLE_ID):
+        return await ctx.send("❌ You don't have permission to use this command.")
+
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(f"✅ Banned **{member}** | Reason: {reason}")
+    except Exception as e:
+        await ctx.send(f"⚠️ Error banning {member}: {e}")
+
+@bot.command()
+async def unban(ctx, user_id: int):
+    if not has_role(ctx.author, SUPPORT_ROLE_ID):
+        return await ctx.send("❌ You don't have permission to use this command.")
+
+    try:
+        user = await bot.fetch_user(user_id)
+        await ctx.guild.unban(user)
+        await ctx.send(f"✅ Unbanned **{user}**.")
+    except Exception as e:
+        await ctx.send(f"⚠️ Error unbanning: {e}")
+
 # ---------- EVENT ----------
 @bot.event
 async def on_ready():
@@ -226,11 +246,6 @@ async def on_ready():
     bot.add_view(TradePanelView())
     bot.add_view(SupportPanelView())
     bot.add_view(CloseTicketView())
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands")
-    except Exception as e:
-        print("Sync error:", e)
 
 # ---------- RUN ----------
 bot.run(os.getenv("TOKEN"))
