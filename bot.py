@@ -43,7 +43,7 @@ class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
     trader = TextInput(label="Trader Username / ID")
     giving = TextInput(label="What are YOU giving?")
     receiving = TextInput(label="What are THEY giving?")
-    fee = TextInput(label="MM fee (if any)")
+    fee = TextInput(label="MM fee")
 
     async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
