@@ -23,17 +23,6 @@ if not os.path.exists(VOUCHES_FILE):
     with open(VOUCHES_FILE, "w") as f:
         json.dump({}, f)
 
-def get_vouches(user_id):
-    with open(VOUCHES_FILE, "r") as f:
-        return json.load(f).get(str(user_id), 0)
-
-def add_vouch(user_id):
-    with open(VOUCHES_FILE, "r") as f:
-        data = json.load(f)
-    data[str(user_id)] = data.get(str(user_id), 0) + 1
-    with open(VOUCHES_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
 # ---------- BOT ----------
 intents = discord.Intents.default()
 intents.message_content = True
@@ -100,7 +89,11 @@ class TicketButtons(View):
         self.tier = tier
         self.claimed_by = None
 
-    @discord.ui.button(label="🎯 Claim", style=discord.ButtonStyle.green)
+    @discord.ui.button(
+        label="🎯 Claim",
+        style=discord.ButtonStyle.green,
+        custom_id="ticket_claim"
+    )
     async def claim(self, interaction: discord.Interaction, button: Button):
         required_role = MM_ROLES[self.tier]
 
@@ -124,7 +117,11 @@ class TicketButtons(View):
             f"🎯 {interaction.user.mention} claimed this ticket."
         )
 
-    @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.red)
+    @discord.ui.button(
+        label="🔒 Close Ticket",
+        style=discord.ButtonStyle.red,
+        custom_id="ticket_close"
+    )
     async def close(self, interaction: discord.Interaction, button: Button):
         if not has_support(interaction.user) and interaction.user != self.claimed_by:
             return await interaction.response.send_message(
@@ -141,6 +138,9 @@ class TradeTypeSelect(Select):
     def __init__(self):
         super().__init__(
             placeholder="Choose middleman tier...",
+            min_values=1,
+            max_values=1,
+            custom_id="trade_mm_select",
             options=[
                 discord.SelectOption(label="Middleman (0-150m)", value="0-150m"),
                 discord.SelectOption(label="Middleman (0-300m)", value="0-300m"),
@@ -159,11 +159,12 @@ class TradePanel(View):
         super().__init__(timeout=None)
         self.add_item(TradeTypeSelect())
 
-# ---------- COMMAND ----------
+# ---------- COMMANDS ----------
 @bot.command()
 async def ticketpanel(ctx):
     if not has_support(ctx.author):
         return await ctx.send("❌ Support only.")
+
     embed = discord.Embed(
         title="🎯 Trade Panel",
         description="Select a middleman tier to open a trade ticket.",
@@ -171,12 +172,37 @@ async def ticketpanel(ctx):
     )
     await ctx.send(embed=embed, view=TradePanel())
 
+# ---------- ADD USER TO TICKET ----------
+@bot.command()
+async def add(ctx, user: discord.Member):
+    if not has_support(ctx.author):
+        return await ctx.send("❌ Support only.")
+
+    if not ctx.channel.category or ctx.channel.category.name != TICKET_CATEGORY:
+        return await ctx.send("❌ This command can only be used in ticket channels.")
+
+    await ctx.channel.set_permissions(
+        user,
+        view_channel=True,
+        send_messages=True,
+        read_message_history=True
+    )
+
+    await ctx.send(f"✅ Added {user.mention} to this ticket.")
+
+# ---------- SILENCE UNKNOWN COMMANDS ----------
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    raise error
+
 # ---------- READY ----------
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     bot.add_view(TradePanel())
-    print("✅ Trade panel loaded.")
+    print("✅ Persistent TradePanel loaded.")
 
 # ---------- RUN ----------
 bot.run(os.getenv("TOKEN"))
