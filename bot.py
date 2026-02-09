@@ -179,14 +179,14 @@ async def mminfo(ctx):
     embed = discord.Embed(
         title="🔐 What Is a Middleman?",
         description=(
-            "**A middleman (MM)** is a trusted third party used to keep trades safe.\n\n"
+            "**A middleman (MM)** is a trusted third party that keeps trades safe.\n\n"
             "**How it works:**\n"
-            "• Both traders give their items to the middleman\n"
-            "• The middleman verifies everything\n"
+            "• Both traders give their items to the MM\n"
+            "• The MM verifies everything\n"
             "• Items are exchanged fairly\n\n"
             "**Why this is safe:**\n"
             "• Prevents scams\n"
-            "• Trusted, vetted middlemen only\n"
+            "• Trusted & vetted middlemen only\n"
             "• Logged ticket system\n\n"
             "**Ticket rules:**\n"
             "• You choose a middleman tier when opening a ticket\n"
@@ -196,9 +196,11 @@ async def mminfo(ctx):
         color=discord.Color.gold()
     )
 
-    embed.set_image(url="https://ibb.co/Bbydq5d")
-    await ctx.send(embed=embed)
+    embed.set_image(
+        url="https://cdn.discordapp.com/attachments/1467374503796408454/1470544269528797259/image-34.png"
+    )
 
+    await ctx.send(embed=embed)
 # ---------- ERRORS ----------
 @bot.event
 async def on_command_error(ctx, error):
