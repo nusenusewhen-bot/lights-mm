@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Button, Select, Modal, TextInput
-import os, asyncio
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,10 +37,11 @@ def is_staff(member):
     return any(r.id == SUPPORT_ROLE_ID for r in member.roles)
 
 # ---------- MODAL ----------
-class TradeModal(Modal, title="📝 Trade Details"):
-    trader = TextInput(label="Other Trader")
-    giving = TextInput(label="You Give")
-    receiving = TextInput(label="You Receive")
+class TradeModal(Modal, title="📝 Trade Ticket"):
+    trader = TextInput(label="Other Trader (User / ID)")
+    giving = TextInput(label="You Are Giving")
+    receiving = TextInput(label="You Are Receiving")
+    fee = TextInput(label="Middleman Fee")
 
     def __init__(self, tier_key):
         super().__init__()
@@ -57,11 +58,13 @@ class TradeModal(Modal, title="📝 Trade Details"):
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         }
 
+        # Allow all MM tiers to view
         for tier in MM_TIERS.values():
             role = guild.get_role(tier["role"])
             if role:
                 overwrites[role] = discord.PermissionOverwrite(view_channel=True)
 
+        # Staff can view/help
         staff = guild.get_role(SUPPORT_ROLE_ID)
         if staff:
             overwrites[staff] = discord.PermissionOverwrite(view_channel=True)
@@ -76,10 +79,11 @@ class TradeModal(Modal, title="📝 Trade Details"):
         embed.add_field(name="Trader", value=self.trader.value, inline=False)
         embed.add_field(name="Giving", value=self.giving.value, inline=False)
         embed.add_field(name="Receiving", value=self.receiving.value, inline=False)
+        embed.add_field(name="MM Fee", value=self.fee.value, inline=False)
         embed.add_field(name="Tier", value=self.tier_key, inline=False)
 
         await channel.send(
-            content=f"{interaction.user.mention}",
+            content=interaction.user.mention,
             embed=embed,
             view=TicketButtons(self.tier_key)
         )
@@ -89,7 +93,7 @@ class TradeModal(Modal, title="📝 Trade Details"):
             ephemeral=True
         )
 
-# ---------- BUTTONS ----------
+# ---------- TICKET BUTTONS ----------
 class TicketButtons(View):
     def __init__(self, tier_key):
         super().__init__(timeout=None)
@@ -109,7 +113,7 @@ class TicketButtons(View):
 
         if user_rank < required_rank:
             return await interaction.response.send_message(
-                "❌ Your middleman tier is too low.",
+                "❌ Your middleman tier is too low for this trade.",
                 ephemeral=True
             )
 
@@ -123,6 +127,7 @@ class TicketButtons(View):
         button.disabled = True
         await interaction.message.edit(view=self)
         await interaction.channel.edit(name=f"claimed-{interaction.user.name}")
+
         await interaction.response.send_message(
             f"🎯 {interaction.user.mention} claimed this ticket."
         )
@@ -146,9 +151,9 @@ class TierSelect(Select):
             for k in MM_TIERS.keys()
         ]
         super().__init__(
-            placeholder="Choose middleman tier",
+            placeholder="Select trade size / MM tier",
             options=options,
-            custom_id="tier_select"
+            custom_id="mm_tier_select"
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -159,7 +164,7 @@ class TierSelect(Select):
 async def ticketpanel(ctx):
     embed = discord.Embed(
         title="🎯 Trade Ticket Panel",
-        description="Select the trade size to open a ticket.",
+        description="Choose the trade size to open a ticket.",
         color=discord.Color.green()
     )
     await ctx.send(embed=embed, view=TradePanel())
@@ -173,14 +178,10 @@ async def mminfo(ctx):
             "**How it works:**\n"
             "• Both traders give items to the MM\n"
             "• MM verifies the trade\n"
-            "• Items are exchanged fairly\n\n"
-            "**Safety:**\n"
-            "• Prevents scams\n"
-            "• Trusted MM tiers\n"
-            "• Logged ticket system\n\n"
+            "• Items are exchanged safely\n\n"
             "**Rules:**\n"
-            "• Only selected tier and higher can claim\n"
-            "• Staff can help but cannot claim unless MM"
+            "• Only the selected tier and higher can claim\n"
+            "• Staff may assist but cannot claim unless MM"
         ),
         color=discord.Color.gold()
     )
