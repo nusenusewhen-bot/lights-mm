@@ -15,6 +15,7 @@ MM_TIERS = {
     "0-300m": {"role": 1467374475724067019, "rank": 2},
     "0-500m": {"role": 1467374474671423620, "rank": 3},
     "0-1b":   {"role": 1467374473723252746, "rank": 4},
+    "1b+":    {"role": 1470545241525194948, "rank": 5},  # NEW
 }
 
 # ---------- BOT ----------
@@ -58,7 +59,7 @@ class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
         support_role = guild.get_role(SUPPORT_ROLE_ID)
         overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
-        # all MM roles can see (claim logic handled in button)
+        # all MM roles can see
         for tier_data in MM_TIERS.values():
             role = guild.get_role(tier_data["role"])
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
@@ -149,6 +150,7 @@ class TradeSelect(Select):
                 discord.SelectOption(label="Middleman (0-300m)", value="0-300m"),
                 discord.SelectOption(label="Middleman (0-500m)", value="0-500m"),
                 discord.SelectOption(label="Middleman (0-1b)", value="0-1b"),
+                discord.SelectOption(label="Middleman (1b+)", value="1b+"),  # NEW
             ]
         )
 
@@ -179,19 +181,19 @@ async def mminfo(ctx):
     embed = discord.Embed(
         title="🔐 What Is a Middleman?",
         description=(
-            "**A middleman (MM)** is a trusted third party that keeps trades safe.\n\n"
+            "**A middleman (MM)** is a trusted third party used to keep trades safe.\n\n"
             "**How it works:**\n"
-            "• Both traders give their items to the MM\n"
-            "• The MM verifies everything\n"
+            "• Both traders give items to the MM\n"
+            "• MM verifies everything\n"
             "• Items are exchanged fairly\n\n"
             "**Why this is safe:**\n"
             "• Prevents scams\n"
-            "• Trusted & vetted middlemen only\n"
+            "• Trusted & vetted middlemen\n"
             "• Logged ticket system\n\n"
             "**Ticket rules:**\n"
-            "• You choose a middleman tier when opening a ticket\n"
+            "• Tier is selected when opening a ticket\n"
             "• That tier **and higher tiers** can claim\n"
-            "• Staff can help but **cannot claim trades**"
+            "• Staff can help but cannot claim trades"
         ),
         color=discord.Color.gold()
     )
@@ -201,6 +203,7 @@ async def mminfo(ctx):
     )
 
     await ctx.send(embed=embed)
+
 # ---------- ERRORS ----------
 @bot.event
 async def on_command_error(ctx, error):
