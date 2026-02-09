@@ -54,11 +54,11 @@ class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         }
 
-        # allow staff to SEE but not claim
+        # staff can see/help but not claim
         support_role = guild.get_role(SUPPORT_ROLE_ID)
         overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
-        # allow all MM roles to SEE (claim logic handled later)
+        # all MM roles can see (claim logic handled in button)
         for tier_data in MM_TIERS.values():
             role = guild.get_role(tier_data["role"])
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
@@ -70,7 +70,7 @@ class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
         )
 
         embed = discord.Embed(title="📌 Trade Ticket", color=discord.Color.green())
-        embed.add_field(name="Tier", value=f"Middleman {self.tier}", inline=False)
+        embed.add_field(name="Middleman Tier", value=self.tier, inline=False)
         embed.add_field(name="Trader", value=self.trader.value, inline=False)
         embed.add_field(name="Giving", value=self.giving.value, inline=False)
         embed.add_field(name="Receiving", value=self.receiving.value, inline=False)
@@ -177,24 +177,26 @@ async def ticketpanel(ctx):
 @bot.command()
 async def mminfo(ctx):
     embed = discord.Embed(
-        title="📘 Middleman Tier Info",
+        title="🔐 What Is a Middleman?",
         description=(
-            "**How claiming works:**\n"
-            "• You can claim your tier **and any lower tier**\n"
-            "• Staff cannot claim trade tickets\n\n"
-            "**Tiers:**\n"
-            "0–150m → Entry MM\n"
-            "0–300m → Experienced MM\n"
-            "0–500m → Senior MM\n"
-            "0–1b → Elite MM"
+            "**A middleman (MM)** is a trusted third party used to keep trades safe.\n\n"
+            "**How it works:**\n"
+            "• Both traders give their items to the middleman\n"
+            "• The middleman verifies everything\n"
+            "• Items are exchanged fairly\n\n"
+            "**Why this is safe:**\n"
+            "• Prevents scams\n"
+            "• Trusted, vetted middlemen only\n"
+            "• Logged ticket system\n\n"
+            "**Ticket rules:**\n"
+            "• You choose a middleman tier when opening a ticket\n"
+            "• That tier **and higher tiers** can claim\n"
+            "• Staff can help but **cannot claim trades**"
         ),
         color=discord.Color.gold()
     )
 
-    embed.set_image(
-        url="https://i.imgur.com/8Km9tLL.png"  # replace with your own image anytime
-    )
-
+    embed.set_image(url="https://ibb.co/Bbydq5d")
     await ctx.send(embed=embed)
 
 # ---------- ERRORS ----------
