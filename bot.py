@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
-import os, json, asyncio
+import os, asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,19 +9,13 @@ load_dotenv()
 # ---------- CONFIG ----------
 SUPPORT_ROLE_ID = 1467374470221136067
 TICKET_CATEGORY = "Tickets"
-VOUCHES_FILE = "vouches.json"
 
-MM_ROLES = {
-    "0-150m": 1467374476537893063,
-    "0-300m": 1467374475724067019,
-    "0-500m": 1467374474671423620,
-    "0-1b":   1467374473723252746,
+MM_TIERS = {
+    "0-150m": {"role": 1467374476537893063, "rank": 1},
+    "0-300m": {"role": 1467374475724067019, "rank": 2},
+    "0-500m": {"role": 1467374474671423620, "rank": 3},
+    "0-1b":   {"role": 1467374473723252746, "rank": 4},
 }
-
-# ---------- DATA ----------
-if not os.path.exists(VOUCHES_FILE):
-    with open(VOUCHES_FILE, "w") as f:
-        json.dump({}, f)
 
 # ---------- BOT ----------
 intents = discord.Intents.default()
@@ -29,12 +23,18 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="$", intents=intents)
 
-def has_support(member):
+def is_support(member):
     return any(r.id == SUPPORT_ROLE_ID for r in member.roles)
+
+def get_mm_rank(member):
+    for tier in MM_TIERS.values():
+        if any(r.id == tier["role"] for r in member.roles):
+            return tier["rank"]
+    return 0
 
 # ---------- TRADE MODAL ----------
 class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
-    def __init__(self, tier: str):
+    def __init__(self, tier):
         super().__init__()
         self.tier = tier
 
@@ -49,14 +49,19 @@ class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
         if not category:
             category = await guild.create_category(TICKET_CATEGORY)
 
-        mm_role_id = MM_ROLES[self.tier]
-        mm_role = guild.get_role(mm_role_id)
-
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-            mm_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)
         }
+
+        # allow staff to SEE but not claim
+        support_role = guild.get_role(SUPPORT_ROLE_ID)
+        overwrites[support_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+        # allow all MM roles to SEE (claim logic handled later)
+        for tier_data in MM_TIERS.values():
+            role = guild.get_role(tier_data["role"])
+            overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
         channel = await guild.create_text_channel(
             name=f"trade-{self.tier}-{interaction.user.id}",
@@ -72,7 +77,7 @@ class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
         embed.add_field(name="Fee", value=self.fee.value, inline=False)
 
         await channel.send(
-            content=f"{interaction.user.mention} <@&{mm_role_id}>",
+            content=interaction.user.mention,
             embed=embed,
             view=TicketButtons(self.tier)
         )
@@ -82,24 +87,27 @@ class TradeTicketModal(Modal, title="📝 Trade Ticket Form"):
             ephemeral=True
         )
 
-# ---------- TICKET BUTTONS ----------
+# ---------- BUTTONS ----------
 class TicketButtons(View):
-    def __init__(self, tier: str):
+    def __init__(self, tier):
         super().__init__(timeout=None)
         self.tier = tier
         self.claimed_by = None
 
-    @discord.ui.button(
-        label="🎯 Claim",
-        style=discord.ButtonStyle.green,
-        custom_id="ticket_claim"
-    )
+    @discord.ui.button(label="🎯 Claim", style=discord.ButtonStyle.green, custom_id="ticket_claim")
     async def claim(self, interaction: discord.Interaction, button: Button):
-        required_role = MM_ROLES[self.tier]
-
-        if not any(r.id == required_role for r in interaction.user.roles):
+        if is_support(interaction.user):
             return await interaction.response.send_message(
-                "❌ You are not allowed to claim this ticket.",
+                "❌ Staff cannot claim trade tickets.",
+                ephemeral=True
+            )
+
+        required_rank = MM_TIERS[self.tier]["rank"]
+        user_rank = get_mm_rank(interaction.user)
+
+        if user_rank < required_rank:
+            return await interaction.response.send_message(
+                "❌ Your middleman tier is too low to claim this ticket.",
                 ephemeral=True
             )
 
@@ -117,30 +125,25 @@ class TicketButtons(View):
             f"🎯 {interaction.user.mention} claimed this ticket."
         )
 
-    @discord.ui.button(
-        label="🔒 Close Ticket",
-        style=discord.ButtonStyle.red,
-        custom_id="ticket_close"
-    )
+    @discord.ui.button(label="🔒 Close", style=discord.ButtonStyle.red, custom_id="ticket_close")
     async def close(self, interaction: discord.Interaction, button: Button):
-        if not has_support(interaction.user) and interaction.user != self.claimed_by:
+        if not is_support(interaction.user) and interaction.user != self.claimed_by:
             return await interaction.response.send_message(
-                "❌ Only support or the claimer can close.",
+                "❌ Only staff or the claimer can close this ticket.",
                 ephemeral=True
             )
-
         await interaction.response.send_message("Closing...", ephemeral=True)
         await asyncio.sleep(1)
         await interaction.channel.delete()
 
-# ---------- TRADE PANEL ----------
-class TradeTypeSelect(Select):
+# ---------- PANEL ----------
+class TradeSelect(Select):
     def __init__(self):
         super().__init__(
             placeholder="Choose middleman tier...",
             min_values=1,
             max_values=1,
-            custom_id="trade_mm_select",
+            custom_id="trade_select",
             options=[
                 discord.SelectOption(label="Middleman (0-150m)", value="0-150m"),
                 discord.SelectOption(label="Middleman (0-300m)", value="0-300m"),
@@ -157,14 +160,13 @@ class TradeTypeSelect(Select):
 class TradePanel(View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(TradeTypeSelect())
+        self.add_item(TradeSelect())
 
 # ---------- COMMANDS ----------
 @bot.command()
 async def ticketpanel(ctx):
-    if not has_support(ctx.author):
+    if not is_support(ctx.author):
         return await ctx.send("❌ Support only.")
-
     embed = discord.Embed(
         title="🎯 Trade Panel",
         description="Select a middleman tier to open a trade ticket.",
@@ -172,25 +174,30 @@ async def ticketpanel(ctx):
     )
     await ctx.send(embed=embed, view=TradePanel())
 
-# ---------- ADD USER TO TICKET ----------
 @bot.command()
-async def add(ctx, user: discord.Member):
-    if not has_support(ctx.author):
-        return await ctx.send("❌ Support only.")
-
-    if not ctx.channel.category or ctx.channel.category.name != TICKET_CATEGORY:
-        return await ctx.send("❌ This command can only be used in ticket channels.")
-
-    await ctx.channel.set_permissions(
-        user,
-        view_channel=True,
-        send_messages=True,
-        read_message_history=True
+async def mminfo(ctx):
+    embed = discord.Embed(
+        title="📘 Middleman Tier Info",
+        description=(
+            "**How claiming works:**\n"
+            "• You can claim your tier **and any lower tier**\n"
+            "• Staff cannot claim trade tickets\n\n"
+            "**Tiers:**\n"
+            "0–150m → Entry MM\n"
+            "0–300m → Experienced MM\n"
+            "0–500m → Senior MM\n"
+            "0–1b → Elite MM"
+        ),
+        color=discord.Color.gold()
     )
 
-    await ctx.send(f"✅ Added {user.mention} to this ticket.")
+    embed.set_image(
+        url="https://i.imgur.com/8Km9tLL.png"  # replace with your own image anytime
+    )
 
-# ---------- SILENCE UNKNOWN COMMANDS ----------
+    await ctx.send(embed=embed)
+
+# ---------- ERRORS ----------
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
@@ -202,7 +209,7 @@ async def on_command_error(ctx, error):
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     bot.add_view(TradePanel())
-    print("✅ Persistent TradePanel loaded.")
+    print("✅ Persistent views loaded")
 
 # ---------- RUN ----------
 bot.run(os.getenv("TOKEN"))
