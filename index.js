@@ -15,7 +15,8 @@ const {
   PermissionFlagsBits,
   ChannelType,
   Events,
-  InteractionType
+  InteractionType,
+  MessageFlags
 } = require('discord.js');
 const db = require('./database.js');
 const wallet = require('./wallet.js');
@@ -72,19 +73,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await interaction.reply({ 
       embeds: [embed], 
-      components: [row],
-      ephemeral: false,
-      fetchReply: true
+      components: [row]
     });
   }
 
   // /bal command - Check wallet balance
   if (commandName === 'bal') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
-      return interaction.reply({ content: '❌ Owner only command.', ephemeral: true });
+      return interaction.reply({ content: '❌ Owner only command.', flags: MessageFlags.Ephemeral });
     }
 
-    await interaction.deferReply({ ephemeral: false });
+    await interaction.deferReply();
 
     try {
       const address = wallet.getAddress(0);
@@ -115,7 +114,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // /shank command (set role for Join Us button)
   if (commandName === 'shank') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
-      return interaction.reply({ content: '❌ Owner only command.', ephemeral: true });
+      return interaction.reply({ content: '❌ Owner only command.', flags: MessageFlags.Ephemeral });
     }
 
     const role = interaction.options.getRole('role');
@@ -127,19 +126,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
     `);
     stmt.run(interaction.guild.id, role.id);
 
-    await interaction.reply({ content: `✅ Shank role set to ${role.name}`, ephemeral: false });
+    await interaction.reply({ content: `✅ Shank role set to ${role.name}` });
   }
 
   // /send command (owner only)
   if (commandName === 'send') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
-      return interaction.reply({ content: '❌ Owner only command.', ephemeral: true });
+      return interaction.reply({ content: '❌ Owner only command.', flags: MessageFlags.Ephemeral });
     }
 
     const address = interaction.options.getString('address');
     const amount = interaction.options.getNumber('amount');
 
-    await interaction.deferReply({ ephemeral: false });
+    await interaction.deferReply();
 
     try {
       await interaction.editReply(`⏳ Sending ${amount} LTC to ${address}... (Implement UTXO logic)`);
@@ -197,7 +196,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isModalSubmit()) return;
   if (!interaction.customId.startsWith('ticket_modal_')) return;
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const otherUserInput = interaction.fields.getTextInputValue('other_user');
   const youGiving = interaction.fields.getTextInputValue('you_giving');
@@ -311,7 +310,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!OWNER_IDS.includes(interaction.user.id)) {
       const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
       if (ticket.creator_id !== interaction.user.id && ticket.other_user_id !== interaction.user.id) {
-        return interaction.reply({ content: '❌ Not your ticket.', ephemeral: true });
+        return interaction.reply({ content: '❌ Not your ticket.', flags: MessageFlags.Ephemeral });
       }
     }
 
@@ -325,13 +324,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     const cooldownKey = `${ticketId}_sender`;
     if (userCooldowns.has(cooldownKey)) {
-      return interaction.reply({ content: '❌ Already selected!', ephemeral: true });
+      return interaction.reply({ content: '❌ Already selected!', flags: MessageFlags.Ephemeral });
     }
 
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
     if (ticket.sender_id) {
-      return interaction.reply({ content: '❌ Sender already selected!', ephemeral: true });
+      return interaction.reply({ content: '❌ Sender already selected!', flags: MessageFlags.Ephemeral });
     }
 
     db.prepare('UPDATE tickets SET sender_id = ? WHERE id = ?').run(interaction.user.id, ticketId);
@@ -341,7 +340,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     userCooldowns.set(cooldownKey, true);
 
-    await interaction.reply({ content: `✅ ${interaction.user} selected as **Sender**`, ephemeral: false });
+    await interaction.reply({ content: `✅ ${interaction.user} selected as **Sender**` });
 
     await checkRolesAndProceed(interaction.channel, ticketId);
   }
@@ -351,13 +350,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     const cooldownKey = `${ticketId}_receiver`;
     if (userCooldowns.has(cooldownKey)) {
-      return interaction.reply({ content: '❌ Already selected!', ephemeral: true });
+      return interaction.reply({ content: '❌ Already selected!', flags: MessageFlags.Ephemeral });
     }
 
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
     if (ticket.receiver_id) {
-      return interaction.reply({ content: '❌ Receiver already selected!', ephemeral: true });
+      return interaction.reply({ content: '❌ Receiver already selected!', flags: MessageFlags.Ephemeral });
     }
 
     db.prepare('UPDATE tickets SET receiver_id = ? WHERE id = ?').run(interaction.user.id, ticketId);
@@ -367,7 +366,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     userCooldowns.set(cooldownKey, true);
 
-    await interaction.reply({ content: `✅ ${interaction.user} selected as **Receiver**`, ephemeral: false });
+    await interaction.reply({ content: `✅ ${interaction.user} selected as **Receiver**` });
 
     await checkRolesAndProceed(interaction.channel, ticketId);
   }
@@ -376,7 +375,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const ticketId = customId.split('_')[2];
     
     if (!OWNER_IDS.includes(interaction.user.id)) {
-      return interaction.reply({ content: '❌ Owner only!', ephemeral: true });
+      return interaction.reply({ content: '❌ Owner only!', flags: MessageFlags.Ephemeral });
     }
 
     db.prepare('UPDATE tickets SET sender_id = NULL, receiver_id = NULL WHERE id = ?').run(ticketId);
@@ -385,7 +384,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     userCooldowns.delete(`${ticketId}_sender`);
     userCooldowns.delete(`${ticketId}_receiver`);
 
-    await interaction.reply({ content: '✅ Roles reset!', ephemeral: false });
+    await interaction.reply({ content: '✅ Roles reset!' });
   }
 
   if (customId.startsWith('confirm_amount_')) {
@@ -393,20 +392,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
 
     if (interaction.user.id !== ticket.sender_id && interaction.user.id !== ticket.receiver_id) {
-      return interaction.reply({ content: '❌ Not part of this trade!', ephemeral: true });
+      return interaction.reply({ content: '❌ Not part of this trade!', flags: MessageFlags.Ephemeral });
     }
 
     const existing = db.prepare('SELECT * FROM confirmations WHERE ticket_id = ? AND user_id = ? AND type = ?')
       .get(ticketId, interaction.user.id, 'amount');
 
     if (existing) {
-      return interaction.reply({ content: '❌ Already confirmed!', ephemeral: true });
+      return interaction.reply({ content: '❌ Already confirmed!', flags: MessageFlags.Ephemeral });
     }
 
     db.prepare('INSERT INTO confirmations (ticket_id, user_id, type, confirmed) VALUES (?, ?, ?, 1)')
       .run(ticketId, interaction.user.id, 'amount');
 
-    await interaction.reply({ content: `✅ ${interaction.user} confirmed the amount!`, ephemeral: false });
+    await interaction.reply({ content: `✅ ${interaction.user} confirmed the amount!` });
 
     const confirmations = db.prepare('SELECT * FROM confirmations WHERE ticket_id = ? AND type = ?')
       .all(ticketId, 'amount');
@@ -421,7 +420,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     db.prepare('DELETE FROM confirmations WHERE ticket_id = ? AND type = ?').run(ticketId, 'amount');
     
-    await interaction.reply({ content: '✅ Amount selection reset. Sender, please enter amount again.', ephemeral: false });
+    await interaction.reply({ content: '✅ Amount selection reset. Sender, please enter amount again.' });
     
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
@@ -440,20 +439,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
     if (interaction.user.id !== ticket.receiver_id) {
-      return interaction.reply({ content: '❌ Only the receiver can use this!', ephemeral: true });
+      return interaction.reply({ content: '❌ Only the receiver can use this!', flags: MessageFlags.Ephemeral });
     }
 
     const settings = db.prepare('SELECT shank_role_id FROM role_settings WHERE guild_id = ?').get(interaction.guild.id);
     
     if (!settings || !settings.shank_role_id) {
-      return interaction.reply({ content: '❌ No shank role configured!', ephemeral: true });
+      return interaction.reply({ content: '❌ No shank role configured!', flags: MessageFlags.Ephemeral });
     }
 
     try {
       await interaction.member.roles.add(settings.shank_role_id);
-      await interaction.reply({ content: `✅ Welcome! You've been given the role.`, ephemeral: false });
+      await interaction.reply({ content: `✅ Welcome! You've been given the role.` });
     } catch (error) {
-      await interaction.reply({ content: '❌ Failed to give role.', ephemeral: true });
+      await interaction.reply({ content: '❌ Failed to give role.', flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -462,10 +461,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
     if (interaction.user.id !== ticket.receiver_id) {
-      return interaction.reply({ content: '❌ Only the receiver can use this!', ephemeral: true });
+      return interaction.reply({ content: '❌ Only the receiver can use this!', flags: MessageFlags.Ephemeral });
     }
 
-    await interaction.reply({ content: `${interaction.user} not interested`, ephemeral: false });
+    await interaction.reply({ content: `${interaction.user} not interested` });
   }
 });
 
