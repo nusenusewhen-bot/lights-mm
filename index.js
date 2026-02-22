@@ -175,6 +175,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isModalSubmit()) return;
+  
+  // Handle amount modal
+  if (interaction.customId.startsWith('amount_modal_')) {
+    const ticketId = interaction.customId.split('_')[2];
+    const amount = parseFloat(interaction.fields.getTextInputValue('amount_usd'));
+
+    if (isNaN(amount) || amount <= 0) {
+      return interaction.reply({ content: '❌ Invalid amount!', flags: MessageFlags.Ephemeral });
+    }
+
+    const ltcPrice = await blockchain.getLtcPriceUSD();
+    const ltcAmount = amount / ltcPrice;
+
+    db.prepare('UPDATE tickets SET amount_usd = ?, amount_ltc = ?, status = ? WHERE id = ?')
+      .run(amount, ltcAmount, 'amount_entered', ticketId);
+
+    const embed = new EmbedBuilder()
+      .setTitle('Confirm Amount')
+      .setDescription(`**Amount:** $${amount.toFixed(2)} USD\n**LTC Equivalent:** ~${ltcAmount.toFixed(6)} LTC\n\nBoth parties must confirm to proceed.`)
+      .setColor(0x5865F2);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`confirm_amount_${ticketId}`)
+        .setLabel('Confirm')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`reset_amount_${ticketId}`)
+        .setLabel('Reset')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    await interaction.reply({ embeds: [embed], components: [row] });
+    return;
+  }
+
   if (!interaction.customId.startsWith('ticket_modal_')) return;
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -399,18 +435,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     db.prepare('DELETE FROM confirmations WHERE ticket_id = ? AND type = ?').run(ticketId, 'amount');
     
-    await interaction.reply({ content: '✅ Amount selection reset. Sender, please enter amount again.' });
+    await interaction.reply({ content: '✅ Amount selection reset.' });
     
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
-    const embed = new EmbedBuilder()
-      .setTitle('Enter Amount')
-      .setDescription(`<@${ticket.sender_id}>, please type the amount in USD:`)
-      .setColor(0x5865F2);
+    // Show amount modal again
+    const modal = new ModalBuilder()
+      .setCustomId(`amount_modal_${ticketId}`)
+      .setTitle('Enter Amount');
 
-    await interaction.channel.send({ content: `<@${ticket.sender_id}>`, embeds: [embed] });
-    
-    activeTransactions.set(ticketId, { awaitingAmount: true, channel: interaction.channel.id });
+    const amountInput = new TextInputBuilder()
+      .setCustomId('amount_usd')
+      .setLabel('Amount in USD')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Enter amount in USD (e.g. 50.00)')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+
+    await interaction.showModal(modal);
   }
 
   if (customId.startsWith('mercy_join_')) {
@@ -447,53 +490,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-
-  const channelTicket = db.prepare('SELECT * FROM tickets WHERE channel_id = ? AND status = ?')
-    .get(message.channel.id, 'awaiting_amount');
-
-  if (!channelTicket) return;
-
-  if (message.author.id !== channelTicket.sender_id) {
-    if (activeTransactions.get(channelTicket.id)?.awaitingAmount) {
-      return message.reply('❌ Only the sender can enter the amount!');
-    }
-    return;
-  }
-
-  const amount = parseFloat(message.content);
-  if (isNaN(amount) || amount <= 0) {
-    return message.reply('❌ Please enter a valid USD amount (e.g. 50.00)');
-  }
-
-  const ltcPrice = await blockchain.getLtcPriceUSD();
-  const ltcAmount = amount / ltcPrice;
-
-  db.prepare('UPDATE tickets SET amount_usd = ?, amount_ltc = ?, status = ? WHERE id = ?')
-    .run(amount, ltcAmount, 'amount_entered', channelTicket.id);
-
-  activeTransactions.delete(channelTicket.id);
-
-  const embed = new EmbedBuilder()
-    .setTitle('Confirm Amount')
-    .setDescription(`**Amount:** $${amount.toFixed(2)} USD\n**LTC Equivalent:** ~${ltcAmount.toFixed(6)} LTC\n\nBoth parties must confirm to proceed.`)
-    .setColor(0x5865F2);
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`confirm_amount_${channelTicket.id}`)
-      .setLabel('Confirm')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`reset_amount_${channelTicket.id}`)
-      .setLabel('Reset')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  await message.reply({ embeds: [embed], components: [row] });
-});
-
 async function checkRolesAndProceed(channel, ticketId) {
   const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
   
@@ -508,18 +504,64 @@ async function checkRolesAndProceed(channel, ticketId) {
 
     await channel.send({ embeds: [embed] });
 
-    db.prepare('UPDATE tickets SET status = ? WHERE id = ?').run('awaiting_amount', ticketId);
-    
-    const amountEmbed = new EmbedBuilder()
-      .setTitle('Enter Amount')
-      .setDescription(`<@${ticket.sender_id}>, please type the amount in USD:`)
-      .setColor(0x5865F2);
+    // Show modal for amount instead of typing
+    const modal = new ModalBuilder()
+      .setCustomId(`amount_modal_${ticketId}`)
+      .setTitle('Enter Amount');
 
-    await channel.send({ content: `<@${ticket.sender_id}>`, embeds: [amountEmbed] });
-    
-    activeTransactions.set(ticketId, { awaitingAmount: true, channel: channel.id });
+    const amountInput = new TextInputBuilder()
+      .setCustomId('amount_usd')
+      .setLabel('Amount in USD')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Enter amount in USD (e.g. 50.00)')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+
+    await channel.send({
+      content: `<@${ticket.sender_id}>`,
+      embeds: [new EmbedBuilder()
+        .setTitle('💰 Enter Amount')
+        .setDescription('Click the button below to enter the amount in USD.')
+        .setColor(0x5865F2)
+      ],
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`open_amount_modal_${ticketId}`)
+          .setLabel('Enter Amount')
+          .setStyle(ButtonStyle.Primary)
+      )]
+    });
   }
 }
+
+// Handle opening amount modal
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith('open_amount_modal_')) return;
+
+  const ticketId = interaction.customId.split('_')[3];
+  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
+
+  if (interaction.user.id !== ticket.sender_id) {
+    return interaction.reply({ content: '❌ Only the sender can enter the amount!', flags: MessageFlags.Ephemeral });
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`amount_modal_${ticketId}`)
+    .setTitle('Enter Amount');
+
+  const amountInput = new TextInputBuilder()
+    .setCustomId('amount_usd')
+    .setLabel('Amount in USD')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('Enter amount in USD (e.g. 50.00)')
+    .setRequired(true);
+
+  modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+
+  await interaction.showModal(modal);
+});
 
 async function proceedToPayment(channel, ticketId) {
   const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
@@ -533,10 +575,11 @@ async function proceedToPayment(channel, ticketId) {
   const totalLTC = ticket.amount_ltc;
   const feeLTC = totalLTC * 0.05;
   const sendAmount = totalLTC - feeLTC;
+  const totalUSD = ticket.amount_usd;
 
   const embed = new EmbedBuilder()
     .setTitle('💳 Payment Required')
-    .setDescription(`Please send **${totalLTC.toFixed(8)} LTC** to:\n\`${ltcAddress}\`\n\n**Breakdown:**\n• Amount: ${sendAmount.toFixed(8)} LTC\n• Fee (5%): ${feeLTC.toFixed(8)} LTC\n• Total: ${totalLTC.toFixed(8)} LTC`)
+    .setDescription(`Please send **${totalLTC.toFixed(8)} LTC** to:\n\`${ltcAddress}\`\n\n**Total in USD:** $${totalUSD.toFixed(2)}\n\n**Breakdown:**\n• Amount: ${sendAmount.toFixed(8)} LTC\n• Fee (5%): ${feeLTC.toFixed(8)} LTC\n• Total: ${totalLTC.toFixed(8)} LTC`)
     .setColor(0xFFD700);
 
   await channel.send({ content: `<@${ticket.sender_id}>`, embeds: [embed] });
@@ -591,9 +634,10 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
 
   db.prepare('UPDATE tickets SET status = ? WHERE id = ?').run('awaiting_receiver_address', ticketId);
 
-  const successEmbed = new EmbedBuilder()
+  // Custom embed with your text - EDIT THIS TEXT AS YOU WANT
+  const customEmbed = new EmbedBuilder()
     .setTitle('✅ Transaction Confirmed')
-    .setDescription('Your payment has been confirmed and secured!')
+    .setDescription('**Transaction found, wait for confirmation**\n\nYour payment has been confirmed and secured!')
     .addFields(
       { name: 'Transaction', value: `\`${txHash}\`` },
       { name: 'Total Received', value: `${totalLTC.toFixed(8)} LTC` },
@@ -603,6 +647,7 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
     )
     .setColor(0x00FF00);
 
+  // Mercy buttons (Join us / Not interested) - NO RELEASE BUTTON
   const mercyRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`mercy_join_${ticketId}`)
@@ -614,7 +659,7 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
       .setStyle(ButtonStyle.Secondary)
   );
 
-  await channel.send({ embeds: [successEmbed], components: [mercyRow] });
+  await channel.send({ embeds: [customEmbed], components: [mercyRow] });
 
   const addressEmbed = new EmbedBuilder()
     .setTitle('📍 Receiver Address Required')
