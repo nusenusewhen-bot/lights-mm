@@ -35,18 +35,14 @@ const client = new Client({
 const OWNER_IDS = process.env.OWNER_IDS.split(',').map(id => id.trim());
 const FEE_WALLET = process.env.FEE_WALLET_LTC;
 
-// Store active transactions in memory
 const activeTransactions = new Map();
 const userCooldowns = new Map();
-
-// ========== COMMANDS ==========
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
 
-  // /panel command
   if (commandName === 'panel') {
     const embed = new EmbedBuilder()
       .setTitle("Eldorado's Auto MM Service")
@@ -77,13 +73,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
-  // /bal command - Check wallet balance
   if (commandName === 'bal') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
       return interaction.reply({ content: '❌ Owner only command.', flags: MessageFlags.Ephemeral });
     }
-
-    await interaction.deferReply();
 
     try {
       const address = wallet.getAddress(0);
@@ -104,14 +97,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setColor(0x00FF00)
         .setTimestamp();
 
-      await interaction.editReply({ embeds: [embed] });
+      await interaction.reply({ embeds: [embed] });
     } catch (error) {
       console.error('Balance check error:', error);
-      await interaction.editReply(`❌ Error checking balance: ${error.message}`);
+      await interaction.reply({ content: `❌ Error checking balance: ${error.message}` });
     }
   }
 
-  // /shank command (set role for Join Us button)
   if (commandName === 'shank') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
       return interaction.reply({ content: '❌ Owner only command.', flags: MessageFlags.Ephemeral });
@@ -129,7 +121,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.reply({ content: `✅ Shank role set to ${role.name}` });
   }
 
-  // /send command (owner only)
   if (commandName === 'send') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
       return interaction.reply({ content: '❌ Owner only command.', flags: MessageFlags.Ephemeral });
@@ -138,17 +129,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const address = interaction.options.getString('address');
     const amount = interaction.options.getNumber('amount');
 
-    await interaction.deferReply();
-
-    try {
-      await interaction.editReply(`⏳ Sending ${amount} LTC to ${address}... (Implement UTXO logic)`);
-    } catch (error) {
-      await interaction.editReply(`❌ Error: ${error.message}`);
-    }
+    await interaction.reply({ content: `⏳ Sending ${amount} LTC to ${address}... (Implement UTXO logic)` });
   }
 });
-
-// ========== SELECT MENU HANDLER ==========
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isStringSelectMenu()) return;
@@ -189,8 +172,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   await interaction.showModal(modal);
 });
-
-// ========== MODAL SUBMISSION ==========
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isModalSubmit()) return;
@@ -296,8 +277,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.editReply('❌ Failed to create ticket.');
   }
 });
-
-// ========== BUTTON HANDLERS ==========
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isButton()) return;
@@ -468,8 +447,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// ========== MESSAGE HANDLER FOR AMOUNT INPUT ==========
-
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
 
@@ -516,8 +493,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   await message.reply({ embeds: [embed], components: [row] });
 });
-
-// ========== HELPER FUNCTIONS ==========
 
 async function checkRolesAndProceed(channel, ticketId) {
   const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
@@ -678,8 +653,6 @@ client.on(Events.MessageCreate, async (message) => {
     break;
   }
 });
-
-// ========== SLASH COMMAND REGISTRATION ==========
 
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
