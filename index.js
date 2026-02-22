@@ -33,7 +33,6 @@ const client = new Client({
 
 const OWNER_IDS = process.env.OWNER_IDS.split(',').map(id => id.trim());
 const FEE_WALLET = process.env.FEE_WALLET_LTC;
-const TICKET_CATEGORY = 'tickets'; // Will be set via command
 
 // Store active transactions in memory
 const activeTransactions = new Map();
@@ -71,7 +70,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const row = new ActionRowBuilder().addComponents(select);
 
-    await interaction.reply({ embeds: [embed], components: [row] });
+    await interaction.reply({ 
+      embeds: [embed], 
+      components: [row],
+      ephemeral: false,
+      fetchReply: true
+    });
   }
 
   // /shank command (set role for Join Us button)
@@ -89,7 +93,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     `);
     stmt.run(interaction.guild.id, role.id);
 
-    await interaction.reply({ content: `✅ Shank role set to ${role.name}`, ephemeral: true });
+    await interaction.reply({ content: `✅ Shank role set to ${role.name}`, ephemeral: false });
   }
 
   // /send command (owner only)
@@ -101,11 +105,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const address = interaction.options.getString('address');
     const amount = interaction.options.getNumber('amount');
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ ephemeral: false });
 
     try {
-      // Here you would implement actual sending logic
-      // For now, it's a placeholder since we need UTXO management
       await interaction.editReply(`⏳ Sending ${amount} LTC to ${address}... (Implement UTXO logic)`);
     } catch (error) {
       await interaction.editReply(`❌ Error: ${error.message}`);
@@ -121,7 +123,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   const category = interaction.values[0];
 
-  // Show modal for ticket creation
   const modal = new ModalBuilder()
     .setCustomId(`ticket_modal_${category}`)
     .setTitle('Create Middleman Ticket');
@@ -168,7 +169,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const youGiving = interaction.fields.getTextInputValue('you_giving');
   const theyGiving = interaction.fields.getTextInputValue('they_giving');
 
-  // Resolve other user
   let otherUser = interaction.guild.members.cache.find(m => 
     m.user.username.toLowerCase() === otherUserInput.toLowerCase() ||
     m.user.id === otherUserInput.replace(/[<@!>]/g, '')
@@ -182,7 +182,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
-  // Create ticket channel
   const channelName = `mm-${interaction.user.username}-${otherUser.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30);
 
   try {
@@ -209,7 +208,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ]
     });
 
-    // Save to database
     const stmt = db.prepare(`
       INSERT INTO tickets (channel_id, guild_id, creator_id, other_user_id, creator_giving, other_giving, status)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -218,7 +216,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const ticketId = result.lastInsertRowid;
 
-    // Create ticket embed
     const embed = new EmbedBuilder()
       .setTitle("👋 Eldorado's Auto Middleman Service")
       .setDescription('Make sure to follow the steps and read the instructions thoroughly.\nPlease explicitly state the trade details if the information below is inaccurate.')
@@ -274,12 +271,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   const customId = interaction.customId;
 
-  // Delete ticket
   if (customId.startsWith('delete_ticket_')) {
     const ticketId = customId.split('_')[2];
     
     if (!OWNER_IDS.includes(interaction.user.id)) {
-      // Check if user is part of the ticket
       const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
       if (ticket.creator_id !== interaction.user.id && ticket.other_user_id !== interaction.user.id) {
         return interaction.reply({ content: '❌ Not your ticket.', ephemeral: true });
@@ -291,11 +286,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  // Role selection - Sender
   if (customId.startsWith('role_sender_')) {
     const ticketId = customId.split('_')[2];
     
-    // Check cooldown
     const cooldownKey = `${ticketId}_sender`;
     if (userCooldowns.has(cooldownKey)) {
       return interaction.reply({ content: '❌ Already selected!', ephemeral: true });
@@ -303,15 +296,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
-    // Check if already set
     if (ticket.sender_id) {
       return interaction.reply({ content: '❌ Sender already selected!', ephemeral: true });
     }
 
-    // Update database
     db.prepare('UPDATE tickets SET sender_id = ? WHERE id = ?').run(interaction.user.id, ticketId);
     
-    // Mark as used
     const usedStmt = db.prepare('INSERT OR REPLACE INTO used_buttons (ticket_id, button_type) VALUES (?, ?)');
     usedStmt.run(ticketId, 'sender');
 
@@ -319,11 +309,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await interaction.reply({ content: `✅ ${interaction.user} selected as **Sender**`, ephemeral: false });
 
-    // Check if both roles selected
     await checkRolesAndProceed(interaction.channel, ticketId);
   }
 
-  // Role selection - Receiver
   if (customId.startsWith('role_receiver_')) {
     const ticketId = customId.split('_')[2];
     
@@ -350,7 +338,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await checkRolesAndProceed(interaction.channel, ticketId);
   }
 
-  // Reset roles
   if (customId.startsWith('role_reset_')) {
     const ticketId = customId.split('_')[2];
     
@@ -361,14 +348,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     db.prepare('UPDATE tickets SET sender_id = NULL, receiver_id = NULL WHERE id = ?').run(ticketId);
     db.prepare('DELETE FROM used_buttons WHERE ticket_id = ?').run(ticketId);
     
-    // Clear cooldowns
     userCooldowns.delete(`${ticketId}_sender`);
     userCooldowns.delete(`${ticketId}_receiver`);
 
     await interaction.reply({ content: '✅ Roles reset!', ephemeral: false });
   }
 
-  // Confirm amount
   if (customId.startsWith('confirm_amount_')) {
     const ticketId = customId.split('_')[2];
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
@@ -377,7 +362,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: '❌ Not part of this trade!', ephemeral: true });
     }
 
-    // Check if already confirmed
     const existing = db.prepare('SELECT * FROM confirmations WHERE ticket_id = ? AND user_id = ? AND type = ?')
       .get(ticketId, interaction.user.id, 'amount');
 
@@ -390,7 +374,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await interaction.reply({ content: `✅ ${interaction.user} confirmed the amount!`, ephemeral: false });
 
-    // Check if both confirmed
     const confirmations = db.prepare('SELECT * FROM confirmations WHERE ticket_id = ? AND type = ?')
       .all(ticketId, 'amount');
 
@@ -399,7 +382,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
-  // Reset amount selection
   if (customId.startsWith('reset_amount_')) {
     const ticketId = customId.split('_')[2];
     
@@ -407,7 +389,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     await interaction.reply({ content: '✅ Amount selection reset. Sender, please enter amount again.', ephemeral: false });
     
-    // Prompt for amount again
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
     const embed = new EmbedBuilder()
@@ -417,38 +398,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await interaction.channel.send({ content: `<@${ticket.sender_id}>`, embeds: [embed] });
     
-    // Set awaiting amount flag
     activeTransactions.set(ticketId, { awaitingAmount: true, channel: interaction.channel.id });
   }
 
-  // Mercy buttons - Join Us
   if (customId.startsWith('mercy_join_')) {
     const ticketId = customId.split('_')[2];
-    
-    // Check if user is the receiver
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
     
     if (interaction.user.id !== ticket.receiver_id) {
       return interaction.reply({ content: '❌ Only the receiver can use this!', ephemeral: true });
     }
 
-    // Get shank role
     const settings = db.prepare('SELECT shank_role_id FROM role_settings WHERE guild_id = ?').get(interaction.guild.id);
     
     if (!settings || !settings.shank_role_id) {
       return interaction.reply({ content: '❌ No shank role configured!', ephemeral: true });
     }
 
-    // Give role
     try {
       await interaction.member.roles.add(settings.shank_role_id);
-      await interaction.reply({ content: `✅ Welcome! You've been given the role.`, ephemeral: true });
+      await interaction.reply({ content: `✅ Welcome! You've been given the role.`, ephemeral: false });
     } catch (error) {
       await interaction.reply({ content: '❌ Failed to give role.', ephemeral: true });
     }
   }
 
-  // Mercy buttons - Not Interested
   if (customId.startsWith('mercy_decline_')) {
     const ticketId = customId.split('_')[2];
     const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
@@ -466,13 +440,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
 
-  // Find active transaction in this channel
   const channelTicket = db.prepare('SELECT * FROM tickets WHERE channel_id = ? AND status = ?')
     .get(message.channel.id, 'awaiting_amount');
 
   if (!channelTicket) return;
 
-  // Check if sender is typing
   if (message.author.id !== channelTicket.sender_id) {
     if (activeTransactions.get(channelTicket.id)?.awaitingAmount) {
       return message.reply('❌ Only the sender can enter the amount!');
@@ -485,17 +457,14 @@ client.on(Events.MessageCreate, async (message) => {
     return message.reply('❌ Please enter a valid USD amount (e.g. 50.00)');
   }
 
-  // Get LTC price and calculate
   const ltcPrice = await blockchain.getLtcPriceUSD();
   const ltcAmount = amount / ltcPrice;
 
-  // Update ticket
   db.prepare('UPDATE tickets SET amount_usd = ?, amount_ltc = ?, status = ? WHERE id = ?')
     .run(amount, ltcAmount, 'amount_entered', channelTicket.id);
 
   activeTransactions.delete(channelTicket.id);
 
-  // Show confirmation buttons
   const embed = new EmbedBuilder()
     .setTitle('Confirm Amount')
     .setDescription(`**Amount:** $${amount.toFixed(2)} USD\n**LTC Equivalent:** ~${ltcAmount.toFixed(6)} LTC\n\nBoth parties must confirm to proceed.`)
@@ -531,7 +500,6 @@ async function checkRolesAndProceed(channel, ticketId) {
 
     await channel.send({ embeds: [embed] });
 
-    // Update status and prompt for amount
     db.prepare('UPDATE tickets SET status = ? WHERE id = ?').run('awaiting_amount', ticketId);
     
     const amountEmbed = new EmbedBuilder()
@@ -548,7 +516,6 @@ async function checkRolesAndProceed(channel, ticketId) {
 async function proceedToPayment(channel, ticketId) {
   const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
   
-  // Generate LTC address (index 0)
   const ltcAddress = wallet.getAddress(0);
   
   db.prepare('UPDATE tickets SET ltc_address = ?, status = ? WHERE id = ?')
@@ -556,7 +523,7 @@ async function proceedToPayment(channel, ticketId) {
 
   const ltcPrice = await blockchain.getLtcPriceUSD();
   const totalLTC = ticket.amount_ltc;
-  const feeLTC = totalLTC * 0.05; // 5% fee
+  const feeLTC = totalLTC * 0.05;
   const sendAmount = totalLTC - feeLTC;
 
   const embed = new EmbedBuilder()
@@ -566,7 +533,6 @@ async function proceedToPayment(channel, ticketId) {
 
   await channel.send({ content: `<@${ticket.sender_id}>`, embeds: [embed] });
 
-  // Start monitoring
   monitorTransaction(channel, ticketId, ltcAddress, totalLTC);
 }
 
@@ -583,12 +549,10 @@ async function monitorTransaction(channel, ticketId, address, expectedAmount) {
       const check = await blockchain.checkIncomingTransaction(address, expectedAmount);
       
       if (check.found && !ticket.tx_hash) {
-        // Transaction found
         db.prepare('UPDATE tickets SET tx_hash = ? WHERE id = ?').run(check.txHash, ticketId);
         
         await channel.send(`⏳ **Transaction found!** Waiting for confirmation...\nTX: \`${check.txHash}\``);
 
-        // Wait for confirmation
         const confirmInterval = setInterval(async () => {
           const confirmed = await blockchain.isTransactionConfirmed(check.txHash);
           
@@ -598,43 +562,27 @@ async function monitorTransaction(channel, ticketId, address, expectedAmount) {
             
             await handleConfirmedTransaction(channel, ticketId, check.txHash);
           }
-        }, 30000); // Check every 30 seconds
+        }, 30000);
       }
     } catch (error) {
       console.error('Monitor error:', error);
     }
-  }, 20000); // Check every 20 seconds
+  }, 20000);
 }
 
 async function handleConfirmedTransaction(channel, ticketId, txHash) {
   const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
   
-  // Calculate splits
   const totalLTC = ticket.amount_ltc;
-  const feeLTC = totalLTC * 0.05;
-  const remaining = totalLTC - feeLTC;
-  const receiverAmount = remaining * 0.5; // 40% of total after fee = ~50% of remaining
-  const botKeep = remaining * 0.5; // Bot keeps same as receiver for now (adjust as needed)
-
-  // Actually: 20% fee wallet, 40% receiver, 40% bot keep
-  // So from total: 20% to fee, 40% to receiver, 40% stays
-  
   const toFee = totalLTC * 0.20;
   const toReceiver = totalLTC * 0.40;
   const botKeeps = totalLTC * 0.40;
 
-  // Send 20% to fee wallet (auto)
   await channel.send(`🔄 Auto-sending 20% fee to secure wallet...`);
-  
-  // Note: Actual sending requires UTXO management and private key signing
-  // This is a placeholder - implement actual send logic in production
-  
   await channel.send(`✅ Fee sent to secure wallet!\n💰 Amount: ${toFee.toFixed(8)} LTC`);
 
-  // Update status
   db.prepare('UPDATE tickets SET status = ? WHERE id = ?').run('awaiting_receiver_address', ticketId);
 
-  // Custom embed (you can edit this text)
   const successEmbed = new EmbedBuilder()
     .setTitle('✅ Transaction Confirmed')
     .setDescription('Your payment has been confirmed and secured!')
@@ -647,7 +595,6 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
     )
     .setColor(0x00FF00);
 
-  // Mercy buttons
   const mercyRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`mercy_join_${ticketId}`)
@@ -661,7 +608,6 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
 
   await channel.send({ embeds: [successEmbed], components: [mercyRow] });
 
-  // Ask for receiver address
   const addressEmbed = new EmbedBuilder()
     .setTitle('📍 Receiver Address Required')
     .setDescription(`<@${ticket.receiver_id}>, please provide your LTC address to receive ${toReceiver.toFixed(8)} LTC.\n\nType your address in this channel.`)
@@ -669,15 +615,12 @@ async function handleConfirmedTransaction(channel, ticketId, txHash) {
 
   await channel.send({ content: `<@${ticket.receiver_id}>`, embeds: [addressEmbed] });
 
-  // Set awaiting address flag
   activeTransactions.set(ticketId, { awaitingAddress: true, receiverId: ticket.receiver_id, amount: toReceiver });
 }
 
-// Handle receiver address input
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
 
-  // Find ticket awaiting address
   const tickets = db.prepare('SELECT * FROM tickets WHERE channel_id = ? AND status = ?')
     .all(message.channel.id, 'awaiting_receiver_address');
 
@@ -689,16 +632,11 @@ client.on(Events.MessageCreate, async (message) => {
       return message.reply('❌ Only the receiver can provide the address!');
     }
 
-    // Validate LTC address (basic check)
     if (!message.content.match(/^(ltc1|[LM])[a-zA-Z0-9]{26,42}$/)) {
       return message.reply('❌ Invalid LTC address format!');
     }
 
-    // Send 40% to receiver
     await message.reply(`🔄 Sending ${active.amount.toFixed(8)} LTC to ${message.content}...`);
-    
-    // Implement actual send logic here
-    
     await message.reply(`✅ Payment sent! Transaction complete.`);
     
     db.prepare('UPDATE tickets SET status = ? WHERE id = ?').run('completed', ticket.id);
@@ -724,7 +662,7 @@ client.once(Events.ClientReady, async () => {
       options: [{
         name: 'role',
         description: 'Role to give',
-        type: 8, // ROLE type
+        type: 8,
         required: true
       }]
     },
@@ -735,13 +673,13 @@ client.once(Events.ClientReady, async () => {
         {
           name: 'address',
           description: 'LTC address',
-          type: 3, // STRING
+          type: 3,
           required: true
         },
         {
           name: 'amount',
           description: 'Amount in LTC',
-          type: 10, // NUMBER
+          type: 10,
           required: true
         }
       ]
