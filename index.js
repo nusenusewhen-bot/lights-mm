@@ -78,6 +78,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
+  // /bal command - Check wallet balance
+  if (commandName === 'bal') {
+    if (!OWNER_IDS.includes(interaction.user.id)) {
+      return interaction.reply({ content: '❌ Owner only command.', ephemeral: true });
+    }
+
+    await interaction.deferReply({ ephemeral: false });
+
+    try {
+      const address = wallet.getAddress(0);
+      const addressInfo = await blockchain.getAddressInfo(address);
+      const ltcPrice = await blockchain.getLtcPriceUSD();
+
+      const balanceLTC = addressInfo.address.balance / 100000000;
+      const balanceUSD = balanceLTC * ltcPrice;
+
+      const embed = new EmbedBuilder()
+        .setTitle('💰 Wallet Balance')
+        .setDescription(`**Address:** \`${address}\``)
+        .addFields(
+          { name: 'Balance (LTC)', value: `${balanceLTC.toFixed(8)} LTC`, inline: true },
+          { name: 'Balance (USD)', value: `$${balanceUSD.toFixed(2)}`, inline: true },
+          { name: 'LTC Price', value: `$${ltcPrice.toFixed(2)}`, inline: true }
+        )
+        .setColor(0x00FF00)
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      console.error('Balance check error:', error);
+      await interaction.editReply(`❌ Error checking balance: ${error.message}`);
+    }
+  }
+
   // /shank command (set role for Join Us button)
   if (commandName === 'shank') {
     if (!OWNER_IDS.includes(interaction.user.id)) {
@@ -655,6 +689,10 @@ client.once(Events.ClientReady, async () => {
     {
       name: 'panel',
       description: 'Spawn the middleman panel'
+    },
+    {
+      name: 'bal',
+      description: 'Check bot wallet balance (Owner only)'
     },
     {
       name: 'shank',
