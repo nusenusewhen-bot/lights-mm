@@ -64,13 +64,22 @@ class WalletManager {
       return data.utxo.map(utxo => ({
         txid: utxo.transaction_hash,
         vout: utxo.index,
-        value: utxo.value,
-        scriptPubKey: utxo.script_hex
+        value: parseInt(utxo.value),
+        scriptPubKey: utxo.script_hex || this.getScriptPubKey(address)
       }));
     } catch (error) {
       console.error('Get UTXOs error:', error.message);
       return [];
     }
+  }
+
+  getScriptPubKey(address) {
+    // Generate scriptPubKey for the address
+    const { output } = bitcoin.payments.p2wpkh({
+      hash: bitcoin.address.fromBech32(address).data,
+      network: LTC_NETWORK,
+    });
+    return output.toString('hex');
   }
 
   async getBalance(index = 0) {
@@ -80,7 +89,7 @@ class WalletManager {
         `${BASE_URL}/dashboards/address/${address}?key=${BLOCKCHAIR_TOKEN}`
       );
       const data = response.data.data[address];
-      return data.address.balance / 100000000; // Convert satoshi to LTC
+      return data.address.balance / 100000000;
     } catch (error) {
       console.error('Get balance error:', error.message);
       return 0;
@@ -91,29 +100,38 @@ class WalletManager {
     const fromAddress = this.getAddress(fromIndex);
     const amountSatoshi = Math.floor(amountLTC * 100000000);
     
-    // Get UTXOs
+    console.log(`Sending ${amountLTC} LTC (${amountSatoshi} satoshi) from ${fromAddress} to ${toAddress}`);
+    
     const utxos = await this.getUTXOs(fromAddress);
+    console.log(`Found ${utxos.length} UTXOs`);
+    
     if (utxos.length === 0) {
       throw new Error('No UTXOs found - wallet is empty');
     }
 
-    // Calculate total available and fee
     const totalAvailable = utxos.reduce((sum, utxo) => sum + utxo.value, 0);
-    const fee = 10000; // 0.0001 LTC fee (adjust as needed)
+    const fee = 10000;
+    
+    console.log(`Total available: ${totalAvailable}, Amount: ${amountSatoshi}, Fee: ${fee}`);
     
     if (totalAvailable < amountSatoshi + fee) {
       throw new Error(`Insufficient balance. Have: ${(totalAvailable/100000000).toFixed(8)} LTC, Need: ${((amountSatoshi + fee)/100000000).toFixed(8)} LTC`);
     }
 
-    // Create transaction
     const psbt = new bitcoin.Psbt({ network: LTC_NETWORK });
+    const keyPair = this.getKeyPair(fromIndex);
     
     let inputSum = 0;
     for (const utxo of utxos) {
+      console.log(`Adding input: ${utxo.txid}:${utxo.vout} - ${utxo.value} satoshi`);
+      
+      // Get raw transaction for nonWitnessUtxo
       const txHex = await this.getTransactionHex(utxo.txid);
+      
       psbt.addInput({
         hash: utxo.txid,
         index: utxo.vout,
+        nonWitnessUtxo: Buffer.from(txHex, 'hex'),
         witnessUtxo: {
           script: Buffer.from(utxo.scriptPubKey, 'hex'),
           value: utxo.value,
@@ -122,31 +140,37 @@ class WalletManager {
       inputSum += utxo.value;
     }
 
-    // Add outputs
+    // Add recipient output
     psbt.addOutput({
       address: toAddress,
       value: amountSatoshi,
     });
 
-    // Change output (if any)
+    // Add change output
     const change = inputSum - amountSatoshi - fee;
-    if (change > 546) { // Dust threshold
+    if (change > 546) {
       psbt.addOutput({
         address: fromAddress,
         value: change,
       });
+      console.log(`Change: ${change} satoshi to ${fromAddress}`);
     }
 
-    // Sign inputs
-    const keyPair = this.getKeyPair(fromIndex);
+    // Sign all inputs
     for (let i = 0; i < utxos.length; i++) {
-      psbt.signInput(i, keyPair);
+      try {
+        psbt.signInput(i, keyPair);
+        console.log(`Signed input ${i}`);
+      } catch (e) {
+        console.error(`Failed to sign input ${i}:`, e.message);
+        throw e;
+      }
     }
 
     psbt.finalizeAllInputs();
     const txHex = psbt.extractTransaction().toHex();
+    console.log(`Transaction built, size: ${txHex.length / 2} bytes`);
 
-    // Broadcast
     const txid = await this.broadcastTransaction(txHex);
     return txid;
   }
